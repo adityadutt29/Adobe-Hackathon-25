@@ -1,0 +1,7 @@
+pdfplumber
+pytesseract
+Pillow
+langdetect
+pydantic
+sentence-transformers
+torch
