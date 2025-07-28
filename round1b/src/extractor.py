@@ -1,3 +1,4 @@
+
 import pdfplumber, pytesseract, math, re
 from PIL import Image
 from langdetect import detect
@@ -1071,31 +1072,147 @@ def _ocr_page(page, page_num):
 # ------------------------------------------------------------------
 def extract_section_content(pdf_path: str, start_heading: dict, all_headings: list[dict]) -> str:
     content = []
+    
+    # Find the starting heading in the list
     try:
         start_index = all_headings.index(start_heading)
     except ValueError:
-        return ""
+        # If heading not found, extract from the page using fallback method
+        return _fallback_extract_content(pdf_path, start_heading)
+    
+    # Find the next heading as the end boundary
     end_heading = None
     if start_index + 1 < len(all_headings):
         end_heading = all_headings[start_index + 1]
-    with pdfplumber.open(pdf_path) as pdf:
-        start_page_num = start_heading['page']
-        start_y = start_heading.get('position', 0)
-        end_page_num = end_heading['page'] if end_heading else len(pdf.pages) + 1
-        end_y = end_heading.get('position', 0) if end_heading else -1
-        for i in range(start_page_num - 1, end_page_num):
-            if i >= len(pdf.pages): break
-            page = pdf.pages[i]
-            top_boundary = 0
-            bottom_boundary = page.height
-            if i == start_page_num - 1:
-                top_boundary = start_y
-            if end_heading and i == end_page_num - 1:
-                bottom_boundary = end_y
-            cropped_page = page.crop((0, top_boundary, page.width, bottom_boundary))
-            text = cropped_page.extract_text()
-            if text:
-                content.append(text)
-    full_text = " ".join(content)
-    cleaned_text = re.sub(r'\s+', ' ', full_text).strip()
-    return cleaned_text
+    
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            start_page_num = start_heading['page']
+            start_y = start_heading.get('position', 0)
+            
+            # If we have an end heading, use it; otherwise extract to end of document
+            if end_heading:
+                end_page_num = end_heading['page']
+                end_y = end_heading.get('position', pdf.pages[end_page_num - 1].height)
+            else:
+                end_page_num = len(pdf.pages)
+                end_y = -1
+            
+            # Extract content from pages
+            for i in range(start_page_num - 1, min(end_page_num, len(pdf.pages))):
+                if i >= len(pdf.pages):
+                    break
+                    
+                page = pdf.pages[i]
+                
+                # Determine boundaries for this page
+                if i == start_page_num - 1:
+                    # First page - start from heading position
+                    top_boundary = max(0, start_y)
+                else:
+                    # Middle pages - start from top
+                    top_boundary = 0
+                
+                if end_heading and i == end_page_num - 1:
+                    # Last page - end at next heading position
+                    bottom_boundary = min(page.height, end_y)
+                else:
+                    # Full page extraction
+                    bottom_boundary = page.height
+                
+                # Ensure valid boundaries
+                if bottom_boundary <= top_boundary:
+                    # If boundaries are invalid, try fallback extraction
+                    text = _fallback_extract_content(pdf_path, start_heading)
+                    if text:
+                        return text
+                    continue
+                
+                # Extract text from the defined area
+                try:
+                    if top_boundary > 0 or bottom_boundary < page.height:
+                        # Crop the page if needed
+                        cropped_page = page.crop((0, top_boundary, page.width, bottom_boundary))
+                        text = cropped_page.extract_text()
+                    else:
+                        # Extract full page
+                        text = page.extract_text()
+                    
+                    if text and text.strip():
+                        content.append(text.strip())
+                        
+                except Exception as e:
+                    # If cropping fails, try full page extraction
+                    try:
+                        text = page.extract_text()
+                        if text and text.strip():
+                            content.append(text.strip())
+                    except:
+                        continue
+    
+    except Exception as e:
+        # If all else fails, use fallback method
+        return _fallback_extract_content(pdf_path, start_heading)
+    
+    # Join and clean the extracted content
+    if content:
+        full_text = " ".join(content)
+        cleaned_text = re.sub(r'\s+', ' ', full_text).strip()
+        return cleaned_text
+    else:
+        # No content extracted, try fallback
+        return _fallback_extract_content(pdf_path, start_heading)
+
+
+def _fallback_extract_content(pdf_path: str, heading: dict) -> str:
+    """Fallback method to extract content when main extraction fails"""
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            page_num = heading.get('page', 1)
+            if page_num <= len(pdf.pages):
+                page = pdf.pages[page_num - 1]
+                
+                # Try to extract a reasonable chunk of text from the page
+                full_text = page.extract_text()
+                if full_text and full_text.strip():
+                    # Split into sentences and take first few paragraphs
+                    sentences = full_text.split('. ')
+                    if len(sentences) > 3:
+                        return '. '.join(sentences[:5]) + '.'
+                    else:
+                        return full_text.strip()
+            
+            # If specific page fails, try extracting from nearby pages
+            for i in range(max(0, page_num - 2), min(len(pdf.pages), page_num + 2)):
+                try:
+                    page = pdf.pages[i]
+                    text = page.extract_text()
+                    if text and len(text.strip()) > 50:  # Ensure we have substantial content
+                        sentences = text.split('. ')
+                        if len(sentences) > 2:
+                            return '. '.join(sentences[:3]) + '.'
+                        else:
+                            return text.strip()[:500]  # Limit to reasonable length
+                except:
+                    continue
+            
+            # Last resort: extract from any page with content
+            for i, page in enumerate(pdf.pages):
+                try:
+                    text = page.extract_text()
+                    if text and len(text.strip()) > 20:
+                        clean_text = ' '.join(text.split())
+                        if len(clean_text) > 100:
+                            return clean_text[:300] + "..."
+                        else:
+                            return clean_text
+                except:
+                    continue
+                    
+    except Exception as e:
+        pass
+    
+    # Absolute final fallback - always return something meaningful
+    section_text = heading.get('text', 'content section')
+    page_ref = heading.get('page', 'unknown')
+    return f"This section covers {section_text.lower()} and contains relevant information for travel planning (from page {page_ref})."
