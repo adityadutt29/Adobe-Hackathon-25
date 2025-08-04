@@ -56,7 +56,7 @@ Adobe-Hackathon-25/
 ### Challenge 1a: High-Performance PDF Structure Extraction
 **Objective**: Extract hierarchical document structure with maximum speed and zero dependencies
 
-Our Round 1a solution employs a sophisticated multi-heuristic approach that achieves remarkable performance without requiring any machine learning models. The system processes complex PDF documents by analyzing font hierarchies, text positioning, and formatting patterns to generate accurate structural outlines.
+Our Round 1a solution utilizes an advanced multi-heuristic approach that delivers impressive results without relying on any machine learning models. It processes complex PDF documents by examining font hierarchies, text positioning, and formatting patterns to accurately extract structural outlines.
 
 **Core Technologies:**
 - **pdfplumber** `v0.10.0` - Advanced PDF text extraction
